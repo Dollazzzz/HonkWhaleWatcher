@@ -4,7 +4,8 @@ const Database = require('better-sqlite3');
 const fetch = require('node-fetch');
 
 // Config
-const BOT_TOKEN = '8217371800:AAF4Aoq3DdZefncNBtQM9G2dC1LH-BtuB3M';
+const BOT_TOKEN = process.env.BOT_TOKEN || '8217371800:AAF4Aoq3DdZefncNBtQM9G2dC1LH-BtuB3M';
+const AUTHORIZED_CHAT_ID = process.env.CHAT_ID || '7748834297';
 const HONK_MINT = '3ag1Mj9AKz9FAkCQ6gAEhpLSX8B2pUbPdkb9iBsDLZNB';
 const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 const DEX_CHECK_INTERVAL = 180000; // 3 minutes
@@ -40,29 +41,12 @@ db.exec(`
     amount REAL,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
   );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
 `);
 
 // Helper functions
-function getChatId() {
-  const result = db.prepare('SELECT value FROM settings WHERE key = ?').get('chat_id');
-  return result ? result.value : null;
-}
-
-function setChatId(chatId) {
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('chat_id', chatId);
-}
-
 async function sendAlert(message) {
-  const chatId = getChatId();
-  if (!chatId) return;
-  
   try {
-    await bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
+    await bot.sendMessage(AUTHORIZED_CHAT_ID, message, { parse_mode: 'HTML' });
   } catch (error) {
     console.error('Error sending alert:', error.message);
   }
@@ -79,6 +63,10 @@ function getWalletInfo(address) {
 
 function formatAddress(address) {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
+}
+
+function isAuthorized(chatId) {
+  return chatId.toString() === AUTHORIZED_CHAT_ID;
 }
 
 // Solana RPC monitoring
@@ -162,7 +150,10 @@ async function monitorAllWallets() {
 // Bot commands
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
-  setChatId(chatId);
+  if (!isAuthorized(chatId)) {
+    bot.sendMessage(chatId, '❌ Unauthorized');
+    return;
+  }
   
   bot.sendMessage(chatId, `
 🐋 <b>Whale Tracker Bot Activated!</b>
@@ -185,7 +176,7 @@ Monitoring $HONK on Solana 🚀
 
 bot.onText(/\/addwallet (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const params = match[1].split(' ');
   const address = params[0];
@@ -202,7 +193,7 @@ bot.onText(/\/addwallet (.+)/, (msg, match) => {
 
 bot.onText(/\/addcluster (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const name = match[1];
   
@@ -216,7 +207,7 @@ bot.onText(/\/addcluster (.+)/, (msg, match) => {
 
 bot.onText(/\/assigncluster (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const params = match[1].split(' ');
   const address = params[0];
@@ -235,7 +226,7 @@ bot.onText(/\/assigncluster (.+)/, (msg, match) => {
 
 bot.onText(/\/addexchange (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const params = match[1].split(' ');
   const address = params[0];
@@ -252,7 +243,7 @@ bot.onText(/\/addexchange (.+)/, (msg, match) => {
 
 bot.onText(/\/listwallet/, (msg) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const wallets = db.prepare(`
     SELECT w.address, w.label, c.name as cluster_name, w.is_exchange
@@ -278,7 +269,7 @@ bot.onText(/\/listwallet/, (msg) => {
 
 bot.onText(/\/listcluster/, (msg) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const clusters = db.prepare('SELECT * FROM clusters').all();
 
@@ -298,7 +289,7 @@ bot.onText(/\/listcluster/, (msg) => {
 
 bot.onText(/\/remove (.+)/, (msg, match) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const address = match[1];
   
@@ -308,7 +299,7 @@ bot.onText(/\/remove (.+)/, (msg, match) => {
 
 bot.onText(/\/status/, (msg) => {
   const chatId = msg.chat.id;
-  if (chatId.toString() !== getChatId()) return;
+  if (!isAuthorized(chatId)) return;
 
   const walletCount = db.prepare('SELECT COUNT(*) as count FROM wallets').get().count;
   const clusterCount = db.prepare('SELECT COUNT(*) as count FROM clusters').get().count;
@@ -325,6 +316,8 @@ bot.onText(/\/status/, (msg) => {
 
 Token: $HONK
 Network: Solana
+Chat ID: ${chatId}
+Authorized: ${isAuthorized(chatId) ? '✅' : '❌'}
   `.trim();
 
   bot.sendMessage(chatId, message, { parse_mode: 'HTML' });
@@ -338,4 +331,5 @@ setTimeout(monitorAllWallets, 30000);
 
 console.log('🐋 Whale Tracker Bot started!');
 console.log('Token:', HONK_MINT);
+console.log('Authorized Chat ID:', AUTHORIZED_CHAT_ID);
 console.log('Check interval:', RPC_CHECK_INTERVAL / 1000, 'seconds');
